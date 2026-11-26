@@ -8,6 +8,7 @@ import streamlit as st
 
 import engine as E
 from live import render_live
+import highlights as H
 
 st.set_page_config(page_title="Smart Money Flow Tracker", page_icon="💹", layout="wide")
 
@@ -73,6 +74,10 @@ st.caption(f"Data terakhir: {scores.index[-1]:%d %b %Y}  ·  Acuan saham: {eq_la
 if md.missing:
     st.warning(f"Sebagian data gagal diunduh dan diabaikan: {', '.join(md.missing)}")
 
+H.render_top3(H.top3(scores, path, sig["macro"], min_score, margin, confirm, regime,
+                     {} if md.is_demo else load_crypto()))
+H.render_news(H.fetch_news())
+st.divider()
 render_live(eq, eq_label, md.is_demo)
 st.divider()
 
