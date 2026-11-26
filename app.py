@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import engine as E
+from live import render_live
 
 st.set_page_config(page_title="Smart Money Flow Tracker", page_icon="💹", layout="wide")
 
@@ -71,6 +72,9 @@ st.caption(f"Data terakhir: {scores.index[-1]:%d %b %Y}  ·  Acuan saham: {eq_la
            + ("  ·  ⚠️ MODE DEMO — angka bukan data pasar nyata" if md.is_demo else ""))
 if md.missing:
     st.warning(f"Sebagian data gagal diunduh dan diabaikan: {', '.join(md.missing)}")
+
+render_live(eq, eq_label, md.is_demo)
+st.divider()
 
 icons = {"Saham": "📈", "Crypto": "₿", "Emas": "🥇", "Kas": "💵"}
 c1, c2 = st.columns([1.3, 1])
