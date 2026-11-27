@@ -199,7 +199,7 @@ def _row(ft, cls, prefer=None):
     if ft.empty:
         return None
     sub = ft[ft["Instrumen"].str.startswith(prefer or PRIMARY.get(cls, cls))]
-    if sub.empty:
+    if sub.empty and prefer is None:
         sub = ft[ft["Kelas"] == cls]
     return None if sub.empty else sub.iloc[0]
 
@@ -220,7 +220,11 @@ def top3(scores, path, status, macro, feats, ft, crypto, md, min_score, margin, 
     wk = scores.iloc[-6] if len(scores) > 6 else scores.iloc[0]
     held = path.iloc[-1]
     m = macro.iloc[-1]
-    by_cls = ft.groupby("Kelas")["Aliran bersih 20h"].sum() if not ft.empty else pd.Series(dtype=float)
+    # volume spot crypto Yahoo adalah agregat bursa (membengkak); pakai ETF IBIT untuk kelas Crypto bila ada
+    ftc = ft
+    if not ft.empty and ft["Instrumen"].str.startswith("ETF Bitcoin").any():
+        ftc = ft[ft["Instrumen"] != "Bitcoin spot"]
+    by_cls = ftc.groupby("Kelas")["Aliran bersih 20h"].sum() if not ftc.empty else pd.Series(dtype=float)
     hy_ie = None
     try:
         hy = md.close["HYG"].dropna()
@@ -290,12 +294,16 @@ def top3(scores, path, status, macro, feats, ft, crypto, md, min_score, margin, 
               f"{'sudah di atas' if gap_th <= 0 else f'butuh +{gap_th:.0f} poin ke'} ambang {min_score:.0f}")
     ev.append(f"Hitungan konfirmasi rotasi: {streak}/{confirm} hari")
     inflow = by_cls.get(tgt, 0.0) > 0
+    safe = _row(ft, "Aman", "Obligasi pemerintah")
+    if not inflow and safe is not None and safe["Aliran bersih 20h"] > 0:
+        ev.insert(0, f"Satu-satunya arus masuk: {safe['Instrumen']} {fmt_usd(safe['Aliran bersih 20h'])} — uang berlindung ke aset aman")
     recs.append({
         "stance": "ARUS DANA", "c": "#60A5FA",
         "title": f"Uang {'mengalir ke' if inflow else 'paling sedikit keluar dari'} {tgt}",
-        "thesis": (f"Dari kelas aset di luar posisi Anda, {tgt} menerima aliran bersih terbesar "
-                   f"({fmt_usd(by_cls.get(tgt, np.nan))} dalam 20 hari). "
-                   + ("Siapkan rencana masuk bertahap." if inflow else "Belum ada uang baru yang masuk — tunggu.")),
+        "thesis": ((f"Dari kelas aset di luar posisi Anda, {tgt} menerima aliran bersih terbesar "
+                    f"({fmt_usd(by_cls.get(tgt, np.nan))} dalam 20 hari). Siapkan rencana masuk bertahap.") if inflow else
+                   (f"Saham, crypto, dan emas sama-sama mengalami arus keluar 20 hari terakhir; yang paling ringan {tgt} "
+                    f"({fmt_usd(by_cls.get(tgt, np.nan))}). Belum ada uang baru yang masuk — tunggu.")),
         "ev": ev,
         "trigger": f"Rotasi ke {tgt} sah bila skor ≥ {min_score:.0f} dan unggul ≥ {margin:.0f} poin dari {held} selama {confirm} hari.",
     })
