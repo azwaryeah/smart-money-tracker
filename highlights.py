@@ -150,33 +150,34 @@ def top3(scores: pd.DataFrame, path: pd.Series, macro: pd.DataFrame, min_score: 
     return recs[:3]
 
 
-TONE_BG = {"action": "#dcfce7", "hold": "#e0f2fe", "watch": "#fef9c3", "warn": "#fee2e2"}
+TONE_C = {"action": "#34D399", "hold": "#60A5FA", "watch": "#FBBF24", "warn": "#FB7185"}
 
 
 def render_top3(recs: list[dict]):
-    st.subheader("🎯 Top 3 rekomendasi hari ini")
+    from style import section
+    section("🎯 Top 3 rekomendasi hari ini", "dihitung ulang setiap hari dari sinyal model")
     cols = st.columns(3)
     for i, (col, r) in enumerate(zip(cols, recs), 1):
-        with col:
-            st.markdown(
-                f"<div style='background:{TONE_BG[r['tone']]};color:#111827;border-radius:12px;padding:14px 16px;"
-                f"height:100%;min-height:150px'><div style='font-size:13px;opacity:.7'>#{i}</div>"
-                f"<div style='font-size:19px;font-weight:700;margin:2px 0 6px'>{r['icon']} {html.escape(r['title'])}</div>"
-                f"<div style='font-size:15px;line-height:1.45'>{html.escape(r['body'])}</div></div>",
-                unsafe_allow_html=True)
+        col.markdown(
+            f"<div class='smt-rec' style='--c:{TONE_C[r['tone']]}'><div class='n'>0{i}</div>"
+            f"<div class='t'>{r['icon']} {html.escape(r['title'])}</div>"
+            f"<div class='b'>{html.escape(r['body'])}</div></div>", unsafe_allow_html=True)
 
 
 def render_news(news: list[dict]):
-    st.subheader("📰 Berita besar pasar (24 jam)")
+    from style import section
+    section("📰 Berita besar pasar", "24 jam terakhir · Google News")
     if not news:
         st.caption("Berita belum bisa dimuat saat ini.")
         return
-    tone_icon = {"naik": "🟢", "turun": "🔴", "netral": "⚪"}
+    tone_c = {"naik": "#34D399", "turun": "#FB7185", "netral": "#64748B"}
+    rows = []
     for it in news:
-        when = it["when"].strftime("%d %b %H:%M") if it["when"] else ""
-        tags = " · ".join(it["assets"])
-        title = it["title"].replace("[", "(").replace("]", ")").replace("$", "\\$")
-        st.markdown(f"{tone_icon[it['tone']]} **[{title}]({it['link']})**  \n"
-                    f"<span style='font-size:13px;opacity:.7'>{html.escape(it['source'])} · {when} WIB · {tags}</span>",
-                    unsafe_allow_html=True)
-    st.caption("Sumber: Google News. 🟢/🔴 = nada judul (naik/turun) terdeteksi otomatis dari kata kunci, bukan analisis isi.")
+        when = it["when"].strftime("%d %b %H:%M") + " WIB" if it["when"] else ""
+        meta = " · ".join(x for x in [it["source"], when, " · ".join(it["assets"])] if x)
+        link = it["link"] if it["link"].startswith("http") else "#"
+        rows.append(f"<a class='smt-item' href='{html.escape(link, quote=True)}' target='_blank' rel='noopener'>"
+                    f"<span class='smt-tone' style='background:{tone_c[it['tone']]}'></span>"
+                    f"<div><div class='h'>{html.escape(it['title'])}</div><div class='m'>{html.escape(meta)}</div></div></a>")
+    st.markdown("<div class='smt-news'>" + "".join(rows) + "</div>", unsafe_allow_html=True)
+    st.caption("Titik hijau/merah = nada judul (naik/turun) dibaca otomatis dari kata kunci, bukan analisis isi.")

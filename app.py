@@ -9,11 +9,13 @@ import streamlit as st
 import engine as E
 from live import render_live
 import highlights as H
+import style as S
 
 st.set_page_config(page_title="Smart Money Flow Tracker", page_icon="💹", layout="wide")
+S.inject()
 
-COLORS = {"Saham": "#2563eb", "Crypto": "#8b5cf6", "Emas": "#d4a017", "Kas": "#64748b",
-          "Strategi Rotasi": "#16a34a", "Tahan Saham": "#2563eb", "Tahan Crypto": "#8b5cf6", "Tahan Emas": "#d4a017"}
+COLORS = {"Saham": "#60A5FA", "Crypto": "#A78BFA", "Emas": "#FBBF24", "Kas": "#94A3B8",
+          "Strategi Rotasi": "#34D399", "Tahan Saham": "#60A5FA", "Tahan Crypto": "#A78BFA", "Tahan Emas": "#FBBF24"}
 
 # ---------------------------------------------------------------------------
 # Sidebar
@@ -68,9 +70,8 @@ since = path[path != path.shift()].index[-1]
 # ---------------------------------------------------------------------------
 # Header & sinyal utama
 # ---------------------------------------------------------------------------
-st.title("💹 Smart Money Flow Tracker")
-st.caption(f"Data terakhir: {scores.index[-1]:%d %b %Y}  ·  Acuan saham: {eq_label}"
-           + ("  ·  ⚠️ MODE DEMO — angka bukan data pasar nyata" if md.is_demo else ""))
+S.hero(held, since, (scores.index[-1] - since).days, regime, regime_desc, scores.index[-1], eq_label,
+       md.is_demo, last, min_score)
 if md.missing:
     st.warning(f"Sebagian data gagal diunduh dan diabaikan: {', '.join(md.missing)}")
 
@@ -82,10 +83,9 @@ render_live(eq, eq_label, md.is_demo)
 st.divider()
 
 icons = {"Saham": "📈", "Crypto": "₿", "Emas": "🥇", "Kas": "💵"}
+S.section("📊 Skor smart money", "0-100 · di atas 55 = kuat")
 c1, c2 = st.columns([1.3, 1])
 with c1:
-    st.markdown(f"### Sinyal saat ini: {icons[held]} **{held.upper()}**")
-    st.markdown(f"Dipegang sejak **{since:%d %b %Y}** ({(scores.index[-1] - since).days} hari).")
     st.markdown(f"**Rezim pasar:** {regime} — {regime_desc}")
     # peringatan dini: kandidat yang mendekati syarat pindah
     leader = last.idxmax()

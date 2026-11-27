@@ -86,7 +86,8 @@ def _fmt(x, dec=2):
 
 
 def render_live(eq_ticker: str, eq_label: str, is_demo: bool):
-    st.subheader("⚡ Live — arus dana hari ini")
+    from style import section
+    section("⚡ Live — arus dana hari ini", "harga bergerak tiap 5 detik")
     c1, c2 = st.columns([1, 2])
     on = c1.toggle("Update tiap 5 detik", value=True, key="live_on")
     focus = c2.selectbox("Grafik bergerak", ["Bitcoin", "Ethereum", eq_label, "Emas", "VIX", "USD/IDR"],
@@ -163,20 +164,20 @@ def render_live(eq_ticker: str, eq_label: str, is_demo: bool):
                 ref = d["prev"] if d else None
             if not s.empty:
                 up = ref is None or s.iloc[-1] >= ref
-                color = "#16a34a" if up else "#dc2626"
+                color = "#34D399" if up else "#FB7185"
                 fig = go.Figure()
                 fig.add_scatter(x=s.index, y=s.values, mode="lines", line=dict(color=color, width=2),
-                                fill="tozeroy", fillcolor="rgba(22,163,74,0.08)" if up else "rgba(220,38,38,0.08)",
+                                fill="tozeroy", fillcolor="rgba(52,211,153,0.10)" if up else "rgba(251,113,133,0.10)",
                                 hovertemplate="%{x|%H:%M:%S} WIB<br>%{y:,.2f}<extra></extra>")
                 fig.add_scatter(x=[s.index[-1]], y=[s.iloc[-1]], mode="markers",
-                                marker=dict(size=11, color=color, line=dict(width=3, color="rgba(255,255,255,0.8)")),
+                                marker=dict(size=11, color=color, line=dict(width=3, color="rgba(10,13,20,0.9)")),
                                 hoverinfo="skip")
                 if ref:
                     fig.add_hline(y=ref, line_dash="dot", line_color="gray",
                                   annotation_text="pembukaan 24j" if key in crypto else "tutup kemarin")
                 lo, hi = float(s.min()), float(s.max())
                 pad = (hi - lo) * 0.1 or hi * 0.001
-                fig.update_layout(height=320, showlegend=False, margin=dict(t=30, l=0, r=0, b=0),
+                fig.update_layout(height=330, showlegend=False, margin=dict(t=30, l=0, r=10, b=24),
                                   title=f"{focus}: {_fmt(s.iloc[-1])}",
                                   yaxis_range=[min(lo, ref or lo) - pad, max(hi, ref or hi) + pad],
                                   xaxis=dict(tickformat="%H:%M"), uirevision=focus)
@@ -207,19 +208,19 @@ def render_live(eq_ticker: str, eq_label: str, is_demo: bool):
             fig = go.Figure(go.Indicator(
                 mode="gauge+number", value=round(pulse), number={"suffix": ""},
                 title={"text": f"Denyut risiko hari ini<br><span style='font-size:0.8em'>{label}</span>"},
-                gauge={"axis": {"range": [-100, 100]}, "bar": {"color": "#111827", "thickness": 0.25},
-                       "steps": [{"range": [-100, -20], "color": "#fecaca"}, {"range": [-20, 20], "color": "#e5e7eb"},
-                                 {"range": [20, 100], "color": "#bbf7d0"}]}))
-            fig.update_layout(height=210, margin=dict(t=60, b=10, l=40, r=40))
+                gauge={"axis": {"range": [-100, 100]}, "bar": {"color": "#E6EAF2", "thickness": 0.22}, "bgcolor": "rgba(0,0,0,0)", "borderwidth": 0,
+                       "steps": [{"range": [-100, -20], "color": "rgba(251,113,133,.35)"}, {"range": [-20, 20], "color": "rgba(148,163,184,.18)"},
+                                 {"range": [20, 100], "color": "rgba(52,211,153,.35)"}]}))
+            fig.update_layout(height=210, margin=dict(t=60, b=10, l=45, r=45))
             st.plotly_chart(fig, width="stretch", key="live_gauge")
             bars = {k: v for k, v in chg.items() if v is not None}
             if bars:
                 items = sorted(bars.items(), key=lambda kv: kv[1])
                 fb = go.Figure(go.Bar(x=[v for _, v in items], y=[k for k, _ in items], orientation="h",
-                                      marker_color=["#16a34a" if v >= 0 else "#dc2626" for _, v in items],
+                                      marker_color=["#34D399" if v >= 0 else "#FB7185" for _, v in items],
                                       text=[f"{v:+.2f}%" for _, v in items], textposition="auto", cliponaxis=False))
                 m = max(abs(v) for v in bars.values()) * 1.15 or 1
-                fb.update_layout(height=170, margin=dict(t=25, b=0, l=0, r=0), title="Perubahan hari ini",
+                fb.update_layout(height=170, margin=dict(t=25, b=0, l=0, r=50), title="Perubahan hari ini",
                                  xaxis=dict(range=[-m, m], visible=False))
                 st.plotly_chart(fb, width="stretch", key="live_bars")
 
