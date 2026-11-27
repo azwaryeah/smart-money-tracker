@@ -1,0 +1,17 @@
+[theme]
+base = "dark"
+primaryColor = "#34D399"
+backgroundColor = "#0A0D14"
+secondaryBackgroundColor = "#131926"
+textColor = "#E6EAF2"
+linkColor = "#7DD3FC"
+borderColor = "#1F2737"
+showWidgetBorder = true
+baseRadius = "12px"
+font = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap"
+codeFont = "Geist Mono:https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&display=swap"
+chartCategoricalColors = ["#60A5FA", "#A78BFA", "#FBBF24", "#34D399", "#F472B6", "#94A3B8"]
+
+[theme.sidebar]
+backgroundColor = "#0E131E"
+secondaryBackgroundColor = "#151C2B"
