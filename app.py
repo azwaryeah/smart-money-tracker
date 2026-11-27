@@ -9,6 +9,7 @@ import streamlit as st
 import engine as E
 from live import render_live
 import highlights as H
+import flow as F
 import style as S
 
 st.set_page_config(page_title="Smart Money Flow Tracker", page_icon="💹", layout="wide")
@@ -75,8 +76,14 @@ S.hero(held, since, (scores.index[-1] - since).days, regime, regime_desc, scores
 if md.missing:
     st.warning(f"Sebagian data gagal diunduh dan diabaikan: {', '.join(md.missing)}")
 
-H.render_top3(H.top3(scores, path, sig["macro"], min_score, margin, confirm, regime,
-                     {} if md.is_demo else load_crypto()))
+crypto_now = {} if md.is_demo else load_crypto()
+status = path.attrs.get("status", {})
+ft = F.flow_table(md)
+H.render_highlights(F.highlights(md, sig["macro"], crypto_now))
+H.render_top3(H.top3(scores, path, status, sig["macro"], sig["feats"], ft, crypto_now, md,
+                     min_score, margin, confirm, regime))
+H.render_flow(ft)
+H.render_rules(scores, path, status, min_score, margin, confirm, cost)
 H.render_news(H.fetch_news())
 st.divider()
 render_live(eq, eq_label, md.is_demo)

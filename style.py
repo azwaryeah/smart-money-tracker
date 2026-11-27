@@ -95,6 +95,34 @@ hr{border-color:var(--line) !important}
 .smt-section{display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:4px 12px; margin:34px 0 14px}
 .smt-section .ttl{font-size:23px; font-weight:700; letter-spacing:-.02em; color:var(--ink)}
 .smt-section span{color:var(--muted); font-size:13px}
+/* sorotan finansial */
+.smt-stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px}
+.smt-stat{background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:12px 14px}
+.smt-stat .k{font-size:12.5px; color:var(--muted)}
+.smt-stat .v{font-size:22px; font-weight:700; letter-spacing:-.02em; margin:2px 0; font-variant-numeric:tabular-nums}
+.smt-stat .d{font-size:12.5px}
+/* top 3 detail */
+.smt-rec .ev{margin:10px 0 8px; padding-left:18px; font-size:13.5px; line-height:1.45; color:#AEB7C7}
+.smt-rec .ev li{margin:3px 0}
+.smt-rec .tr{font-size:13.5px; color:#DCE3EE; border-top:1px dashed var(--line); padding-top:8px}
+.smt-rec .n{letter-spacing:.02em}
+/* peta aliran dana */
+.smt-flows{display:grid; gap:8px; margin-top:8px}
+.smt-flow{display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1.6fr) minmax(0,1.5fr); gap:12px; align-items:center;
+  padding:12px 14px; border:1px solid var(--line); border-radius:14px; background:var(--panel)}
+@media(max-width:820px){.smt-flow{grid-template-columns:minmax(0,1fr)}}
+.smt-flow .fl-n b{display:block; font-size:15px}
+.smt-flow .fl-n span{font-size:12.5px; color:var(--muted)}
+.smt-flow .fl-m{display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; font-size:12px; color:var(--muted)}
+.smt-flow .fl-m b{display:block; font-size:14.5px; color:var(--ink); font-variant-numeric:tabular-nums; white-space:nowrap}
+.smt-flow .fl-a{font-size:14px; line-height:1.4}
+/* aturan rotasi */
+.smt-rules .dec{font-size:18px; font-weight:700; margin-bottom:10px}
+.smt-step{display:grid; grid-template-columns:22px minmax(0,1fr); gap:10px; padding:10px 0; border-top:1px solid var(--line)}
+.smt-step .ic{font-size:18px; font-weight:800; line-height:1.2}
+.smt-step .st{font-weight:650}
+.smt-step .sd{font-size:14px; color:#AEB7C7}
+.smt-step .sn{font-size:13.5px; color:var(--ink); margin-top:2px; font-family:'Geist Mono',monospace}
 </style>
 """
 

@@ -39,6 +39,7 @@ CORE = {
     "IEF": "Obligasi pemerintah AS 7-10 th",
     "HG=F": "Tembaga",
     "BIL": "T-Bill (kas)",
+    "IBIT": "ETF Bitcoin spot (BlackRock)",
     "IDR=X": "USD/IDR",
 }
 
@@ -120,6 +121,7 @@ def demo_market_data(equity_ticker: str = "SPY", days: int = 780, seed: int = 7)
     close["IEF"] = 95 * np.exp(np.cumsum(-0.0001 * risk + rng.normal(0, 0.003, n)))
     close["HG=F"] = 4.0 * np.exp(np.cumsum(0.0006 * risk + rng.normal(0, 0.012, n)))
     close["BIL"] = 91 * np.exp(np.arange(n) * 0.00018)
+    close["IBIT"] = close["BTC-USD"] / 1650
     close["IDR=X"] = 15800 * np.exp(np.cumsum(-0.0001 * risk + rng.normal(0, 0.003, n)))
     close = pd.DataFrame(close, index=idx)
     spread = np.abs(rng.normal(0, 0.006, close.shape))
@@ -255,6 +257,7 @@ def rotation_path(scores: pd.DataFrame, min_score=55.0, margin=5.0, confirm=3) -
     """
     held, streak, cand_prev = None, 0, None
     out = []
+    st = {}
     for _, row in scores.iterrows():
         best = row.idxmax()
         cand = best if row[best] >= min_score else CASH
@@ -270,7 +273,11 @@ def rotation_path(scores: pd.DataFrame, min_score=55.0, margin=5.0, confirm=3) -
             streak = 0
         cand_prev = cand
         out.append(held)
-    return pd.Series(out, index=scores.index, name="posisi")
+        st = {"cand": cand, "best": best, "best_score": float(row[best]), "streak": streak,
+              "cand_score": float(cand_score), "held_score": float(row[held]) if held in row else 50.0}
+    ser = pd.Series(out, index=scores.index, name="posisi")
+    ser.attrs["status"] = st
+    return ser
 
 
 def rotation_events(path: pd.Series, scores: pd.DataFrame) -> pd.DataFrame:
