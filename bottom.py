@@ -241,8 +241,6 @@ try:
 except Exception as ex:
     st.error(f"Riwayat harga Bitcoin gagal dimuat: {ex}")
     st.stop()
-lp, lt = live_price()
-price = lp or float(daily.iloc[-1])
 onchain = load_onchain()
 
 with st.sidebar:
@@ -252,46 +250,118 @@ with st.sidebar:
         manual_rp = st.number_input("Realized price (USD)", 0.0, 500000.0, 0.0, 100.0)
         manual_z = st.number_input("MVRV Z-Score", -5.0, 15.0, 0.0, 0.01)
 
-R = compute(daily, price, onchain, manual_rp, manual_z)
-label, lc = zone_label(R["score"])
-src = f"Live dari Coinbase · ${price:,.0f} · update {lt:%d %b, %H:%M} WIB" if lp else f"Close terakhir ${price:,.0f}"
-
-st.markdown(f"""
+st.markdown("""
 <div class="smt-card" style="margin-bottom:14px">
-  <span class="smt-brand"><span class="smt-dot"></span>{src}</span>
+  <span class="smt-brand"><span class="smt-dot"></span>Live · harga & skor diperbarui otomatis</span>
   <div class="smt-title" style="background:linear-gradient(92deg,#F8FAFC 10%,#FDBA74 60%,#F7931A 95%);-webkit-background-clip:text;background-clip:text;color:transparent">Bitcoin Bottom Signal</div>
-  <div class="smt-sub">Apakah Bitcoin sedang di zona bottom siklus? Skor gabungan {R['n_scored']} indikator valuasi on-chain & siklus, plus konfirmasi tren. Data harian s/d {R['daily'].index[-1]:%d %b %Y}.</div>
+  <div class="smt-sub">Apakah Bitcoin sedang di zona bottom siklus? Skor gabungan indikator valuasi on-chain & siklus, plus konfirmasi tren — dihitung ulang setiap kali harga bergerak.</div>
 </div>
 <div class="bt-warn">⚠️ Keberhasilan model di masa lalu bukan jaminan keberhasilan di masa depan. Bukan saran finansial.</div>
 """, unsafe_allow_html=True)
+live_on = st.toggle("⚡ Live — update tiap 5 detik", value=True, key="bt_live")
 
-knob = min(max(R["score"], 1), 99)
-st.markdown(f"""
-<div class="bt-hero" style="margin-top:16px">
+
+@st.cache_data(ttl=4, show_spinner=False)
+def live_stats():
+    try:
+        r = requests.get("https://api.exchange.coinbase.com/products/BTC-USD/stats", timeout=4,
+                         headers={"User-Agent": "smart-money-tracker"})
+        j = r.json()
+        return float(j["last"]), float(j["open"])
+    except Exception:
+        return None, None
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def live_candles() -> pd.Series:
+    try:
+        r = requests.get("https://api.exchange.coinbase.com/products/BTC-USD/candles", params={"granularity": 300},
+                         timeout=6, headers={"User-Agent": "smart-money-tracker"})
+        rows = r.json()
+        s = pd.Series({pd.Timestamp(x[0], unit="s", tz="UTC"): float(x[4]) for x in rows}).sort_index()
+        return s.tz_convert(WIB)
+    except Exception:
+        return pd.Series(dtype=float)
+
+
+@st.fragment(run_every=5 if live_on else None)
+def live_block():
+    last, open24 = live_stats()
+    price = last or float(daily.iloc[-1])
+    now = pd.Timestamp.now(tz=WIB)
+    R = compute(daily, price, onchain, manual_rp, manual_z)
+    ticks = st.session_state.setdefault("bt_ticks", [])
+    ticks.append((now.floor("s"), price, R["score"]))
+    del ticks[:-720]
+    first_score = ticks[0][2]
+    label, lc = zone_label(R["score"])
+    knob = min(max(R["score"], 1), 99)
+    chg = f"{(price / open24 - 1) * 100:+.2f}% (24j)" if open24 else ""
+    chg_c = "#34D399" if open24 and price >= open24 else "#FB7185"
+    dscore = R["score"] - first_score
+    src = (f"Live dari Coinbase · update {now:%H:%M:%S} WIB" if last else
+           f"Harga live tidak tersedia — memakai close {daily.index[-1]:%d %b %Y}")
+    st.markdown(f"""
+<div class="bt-hero" style="margin-top:6px">
   <div class="smt-card">
-    <div class="smt-k">Skor bottom (valuasi)</div>
-    <div class="bt-score">{R['score']:.0f}</div>
+    <div class="smt-k">Skor bottom (valuasi) · {R['n_scored']} indikator</div>
+    <div class="bt-score">{R['score']:.0f}<span style="font-size:18px;color:#8B95A8;font-weight:600;letter-spacing:0"> &nbsp;{dscore:+.1f} sejak dibuka</span></div>
     <div style="font-size:22px;font-weight:700;color:{lc};margin-top:6px">{label}</div>
     <div class="bt-track"><div class="bt-knob" style="left:{knob}%"></div></div>
     <div class="bt-ends"><span>Jauh dari bottom</span><span>Zona bottom</span></div>
     <div class="smt-k" style="margin-top:12px">Konfirmasi tren: {R['stage_txt']}</div>
   </div>
   <div class="smt-card">
-    <div class="smt-k">Harga sekarang</div>
+    <div class="smt-k"><span class="smt-dot" style="display:inline-block;margin-right:6px"></span>{src}</div>
     <div class="smt-signal" style="color:#F8FAFC">${price:,.0f}</div>
-    <div class="smt-k">ATH ${R['ath']:,.0f} ({R['ath_date']:%d %b %Y}) · drawdown {R['dd'] * 100:.0f}% · {R['days']} hari sejak ATH</div>
-    <div class="smt-k" style="margin-top:10px">Cara membaca: skor ≥ 80 = valuasi setara bottom siklus sebelumnya. Bottom yang "sah" biasanya dikonfirmasi saat tren berpindah ke Stage 1–2.</div>
+    <div style="font-size:15px;font-weight:600;color:{chg_c}">{chg}</div>
+    <div class="smt-k" style="margin-top:8px">ATH ${R['ath']:,.0f} ({R['ath_date']:%d %b %Y}) · drawdown {R['dd'] * 100:.1f}% · {R['days']} hari sejak ATH</div>
+    <div class="smt-k" style="margin-top:8px">Skor ≥ 80 = valuasi setara bottom siklus sebelumnya. Bottom yang "sah" biasanya dikonfirmasi saat tren berpindah ke Stage 1–2.</div>
   </div>
 </div>""", unsafe_allow_html=True)
 
-cards = []
-for i in R["ind"]:
-    badge = "<span class='b'>Zona bottom</span>" if i["zone"] else ""
-    bar = f"<div class='p'><i style='width:{i['score']:.0f}%'></i></div>" if i["score"] is not None and i["w"] else ""
-    cards.append(f"<div class='bt-ind{' z' if i['zone'] else ''}' title='{html.escape(i['tip'], quote=True)}'><div class='h'><span>{i['name']}</span>{badge}</div>"
-                 f"<div class='v'>{i['val']}</div><div class='s'>{i['sub']}</div>{bar}</div>")
-st.markdown("<div class='bt-grid'>" + "".join(cards) + "</div>", unsafe_allow_html=True)
-st.caption("Bilah oranye = seberapa 'bottom' indikator itu (0–100). Arahkan kursor ke kartu untuk penjelasan.")
+    cards = []
+    for i in R["ind"]:
+        badge = "<span class='b'>Zona bottom</span>" if i["zone"] else ""
+        bar = f"<div class='p'><i style='width:{i['score']:.0f}%'></i></div>" if i["score"] is not None and i["w"] else ""
+        cards.append(f"<div class='bt-ind{' z' if i['zone'] else ''}' title='{html.escape(i['tip'], quote=True)}'><div class='h'><span>{i['name']}</span>{badge}</div>"
+                     f"<div class='v'>{i['val']}</div><div class='s'>{i['sub']}</div>{bar}</div>")
+    st.markdown("<div class='bt-grid'>" + "".join(cards) + "</div>", unsafe_allow_html=True)
+    st.caption("Bilah oranye = seberapa 'bottom' indikator itu (0–100). Arahkan kursor ke kartu untuk penjelasan.")
+
+    # grafik live: harga intrahari vs level bottom kunci
+    S.section("⚡ Harga live vs level bottom", "candle 5 menit · ±24 jam terakhir")
+    s = live_candles()
+    live = pd.Series({t: p for t, p, _ in ticks})
+    s = pd.concat([s, live]).sort_index()
+    s = s[~s.index.duplicated(keep="last")].tail(400)
+    if not s.empty:
+        f = go.Figure()
+        f.add_scatter(x=s.index, y=s.values, mode="lines", line=dict(color="#F7931A", width=2), name="BTC",
+                      fill="tozeroy", fillcolor="rgba(247,147,26,0.08)", hovertemplate="%{x|%H:%M} WIB<br>$%{y:,.0f}<extra></extra>")
+        f.add_scatter(x=[s.index[-1]], y=[s.iloc[-1]], mode="markers", showlegend=False, hoverinfo="skip",
+                      marker=dict(size=11, color="#F7931A", line=dict(width=3, color="rgba(10,13,20,.9)")))
+        levels = [("200WMA", float(R["w200"].iloc[-1]), "#34D399")]
+        if R["rp"]:
+            levels.append(("Realized", R["rp"], "#F472B6"))
+        levels.append(("Power law support", float(power_law([now.tz_localize(None)])[0]) * 0.42, "#C084FC"))
+        lo, hi = float(s.min()), float(s.max())
+        for name, v, c in levels:
+            f.add_hline(y=v, line_dash="dot", line_color=c, annotation_text=f"{name} ${v:,.0f}",
+                        annotation_position="top left", annotation_font_color=c)
+        vals = [lo, hi] + [v for _, v, _ in levels if abs(v / price - 1) < 0.25]
+        pad = (max(vals) - min(vals)) * 0.08
+        f.update_layout(height=320, margin=dict(t=10, l=0, r=0, b=0), showlegend=False,
+                        yaxis_range=[min(vals) - pad, max(vals) + pad], xaxis=dict(tickformat="%H:%M"),
+                        uirevision="bt_live")
+        st.plotly_chart(f, width="stretch", key="bt_live_chart")
+        st.caption("Garis putus-putus = level bottom yang sedang diperhatikan pasar. Level yang jauh (>25%) tidak ditampilkan agar grafik terbaca.")
+
+
+live_block()
+lp, _ = live_stats()
+price = lp or float(daily.iloc[-1])
+R = compute(daily, price, onchain, manual_rp, manual_z)
 
 # --- grafik utama ---------------------------------------------------------
 S.section("📈 Grafik harga & level kunci", "skala logaritmik · data mingguan")
