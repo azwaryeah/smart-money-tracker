@@ -199,6 +199,125 @@ def compute(daily: pd.Series, price: float, onchain: dict, manual_rp: float, man
             "n_scored": len(scored)}
 
 
+def _L(x, zero, full):
+    return np.clip((np.asarray(x, dtype=float) - zero) / (full - zero) * 100, 0, 100)
+
+
+def _wavg(parts):
+    num = np.zeros(len(parts[0][0]))
+    den = np.zeros(len(parts[0][0]))
+    for v, w in parts:
+        ok = ~np.isnan(v)
+        num[ok] += v[ok] * w
+        den[ok] += w
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(den > 0, num / den, np.nan)
+
+
+def score_history(R) -> pd.DataFrame:
+    """Skor beli (bottom) & skor jual (puncak) per minggu, plus tahap tren."""
+    wk = R["wk"]
+    idx = wk.index
+    p = wk.values.astype(float)
+    r200 = p / R["w200"].values
+    a, b, edges = R["rb"]
+    lines = np.vstack(rainbow_lines(idx, a, b, edges))
+    band = np.clip((p[None, :] > lines).sum(axis=0), 1, 9).astype(float)
+    pl = p / power_law(idx)
+    cm = wk.cummax()
+    dd = (wk / cm - 1).values
+    ath_d = pd.Series(idx, index=idx).where(wk >= cm).ffill()
+    days = (idx - pd.DatetimeIndex(ath_d)).days.values.astype(float)
+    nan = np.full(len(idx), np.nan)
+
+    def weekly(s):
+        if s is None or not len(s):
+            return nan
+        return s.reindex(pd.date_range(min(s.index.min(), idx.min()), idx.max())).ffill().reindex(idx).values
+
+    rp = weekly(R["rp_s"])
+    if np.isnan(rp).all() and R["rp"]:
+        rp = nan.copy()
+        rp[-1] = R["rp"]
+    mvrv = p / rp
+    z = weekly(R["z_s"])
+    buy = _wavg([(_L(r200, 2.0, 0.9), 20), (_L(mvrv, 2.5, 1.0), 15), (_L(band, 7, 1), 15), (_L(pl, 1.5, 0.42), 15),
+                 (_L(z, 3.0, 0.0), 10), (_L(days, 150, DAYS_LO), 10), (_L(dd, -0.20, -0.77), 15)])
+    sell = _wavg([(_L(r200, 1.6, 3.2), 25), (_L(mvrv, 2.0, 3.4), 20), (_L(band, 5, 8.5), 20), (_L(pl, 0.9, 2.0), 15),
+                  (_L(z, 2.5, 6.5), 20)])
+    w30 = R["w30"]
+    slope = (w30 - w30.shift(4)).values
+    above = p > w30.values
+    stage = np.where(above & (slope > 0), 2, np.where(above, 1, np.where(slope < 0, 4, 3)))
+    stage = np.where(np.isnan(w30.values), 0, stage)
+    return pd.DataFrame({"price": p, "buy": buy, "sell": sell, "stage": stage, "r200": r200}, index=idx)
+
+
+BUY_TH, SELL_TH, SELL_SOFT = 80, 70, 55
+
+
+def signal_events(H: pd.DataFrame) -> pd.DataFrame:
+    """Titik keputusan: masuk zona beli/jual, dan konfirmasi tren sesudahnya (≤ 52 minggu)."""
+    ev = []
+    inb = H["buy"] >= BUY_TH
+    ins = H["sell"] >= SELL_TH
+    last_b = last_s = last_x = None
+    rmax = H["r200"].rolling(52, min_periods=1).max().shift(1)
+    for i in range(1, len(H)):
+        t = H.index[i]
+        if inb.iloc[i] and not inb.iloc[i - 1]:
+            ev.append((t, "BELI", "Masuk zona beli (valuasi setara bottom siklus)"))
+            last_b = t
+        if ins.iloc[i] and not ins.iloc[i - 1]:
+            ev.append((t, "JUAL", "Masuk zona jual (valuasi setara puncak siklus)"))
+            last_s = t
+        st_now, st_prev = H["stage"].iloc[i], H["stage"].iloc[i - 1]
+        if last_b is not None and st_now == 2 and st_prev != 2 and (t - last_b).days <= 364:
+            ev.append((t, "KONFIRMASI BELI", "Tren berbalik naik (Stage 2) setelah zona beli"))
+            last_b = None
+        if last_s is not None and st_now == 4 and st_prev != 4 and (t - last_s).days <= 364:
+            ev.append((t, "KONFIRMASI JUAL", "Tren berbalik turun (Stage 4) setelah zona jual"))
+            last_s = None
+            last_x = t
+        elif (st_now == 4 and st_prev != 4 and rmax.iloc[i] >= 2.0
+              and (last_x is None or (t - last_x).days > 364)):
+            ev.append((t, "JUAL (KELUAR TREN)", f"Tren berbalik turun setelah reli besar (harga sempat {rmax.iloc[i]:.1f}× 200WMA)"))
+            last_x = t
+    df = pd.DataFrame(ev, columns=["Tanggal", "Sinyal", "Alasan"])
+    if df.empty:
+        return df
+    df["Harga"] = [float(H.loc[t, "price"]) for t in df["Tanggal"]]
+    for n, lab in ((26, "6 bln kemudian"), (52, "12 bln kemudian")):
+        out = []
+        for t, pr in zip(df["Tanggal"], df["Harga"]):
+            j = H.index.get_loc(t) + n
+            out.append(H["price"].iloc[j] / pr - 1 if j < len(H) else np.nan)
+        df[lab] = out
+    return df
+
+
+def decision(H: pd.DataFrame, EV: pd.DataFrame | None = None) -> tuple[str, str, str]:
+    r = H.iloc[-1]
+    b, s, stg = r["buy"], r["sell"], int(r["stage"])
+    recent_exit = (EV is not None and not EV.empty and
+                   ((EV["Sinyal"] == "JUAL (KELUAR TREN)") & (EV["Tanggal"] >= H.index[-1] - pd.Timedelta(days=182))).any())
+    if b >= BUY_TH and stg in (1, 2):
+        return "BELI", "#34D399", f"Valuasi di zona bottom (skor beli {b:.0f}) dan tren sudah berbalik (Stage {stg}). Ini kombinasi sinyal beli terkuat secara historis."
+    if b >= BUY_TH:
+        return "AKUMULASI BERTAHAP (DCA)", "#A3E635", f"Valuasi di zona bottom (skor beli {b:.0f}), tapi tren masih Stage {stg} — harga bisa turun lagi. Cicil bertahap, jangan sekaligus; tunggu Stage 1–2 untuk porsi lebih besar."
+    if s >= SELL_TH and stg in (3, 4):
+        return "JUAL / AMANKAN UNTUNG", "#FB7185", f"Valuasi di zona puncak (skor jual {s:.0f}) dan tren sudah melemah (Stage {stg}). Secara historis ini fase distribusi."
+    if s >= SELL_TH:
+        return "AMBIL UNTUNG BERTAHAP", "#FB923C", f"Valuasi di zona puncak (skor jual {s:.0f}) meski tren masih naik. Jual sebagian secara bertahap saat harga naik."
+    if s >= SELL_SOFT:
+        return "WASPADA — PERTIMBANGKAN AMBIL SEBAGIAN", "#FBBF24", f"Skor jual {s:.0f} mulai tinggi. Kurangi risiko, hindari menambah posisi besar."
+    if recent_exit and b < BUY_TH:
+        return "KURANGI RISIKO / TUNGGU", "#FB923C", f"Tren berbalik turun setelah reli besar dalam 6 bulan terakhir. Secara historis bear market masih bisa berlanjut — tunggu skor beli ≥ {BUY_TH} (kini {b:.0f})."
+    if b >= 60:
+        return "CICIL KECIL / PANTAU", "#93C5FD", f"Skor beli {b:.0f} mendekati zona bottom. Boleh mulai cicil kecil, sambil menunggu skor ≥ {BUY_TH}."
+    return "TAHAN", "#94A3B8", f"Tidak ada sinyal ekstrem (skor beli {b:.0f}, skor jual {s:.0f}). Tidak perlu tindakan besar."
+
+
 def zone_label(s):
     if s >= 80:
         return "Zona bottom kuat", "#34D399"
@@ -328,6 +447,20 @@ def live_block():
                      f"<div class='v'>{i['val']}</div><div class='s'>{i['sub']}</div>{bar}</div>")
     st.markdown("<div class='bt-grid'>" + "".join(cards) + "</div>", unsafe_allow_html=True)
     st.caption("Bilah oranye = seberapa 'bottom' indikator itu (0–100). Arahkan kursor ke kartu untuk penjelasan.")
+    H = score_history(R)
+    act, ac, why = decision(H, signal_events(H))
+    hb, hs = H["buy"].iloc[-1], H["sell"].iloc[-1]
+    st.markdown(f"""
+<div class="smt-card" style="margin-top:14px;border-color:{ac}55">
+  <div class="smt-k">🧭 Keputusan saat ini (model)</div>
+  <div style="font-size:clamp(26px,3.6vw,38px);font-weight:800;letter-spacing:-.02em;color:{ac};margin:4px 0 6px">{act}</div>
+  <div class="smt-sub" style="max-width:90ch">{why}</div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+    <span class="smt-chip" style="border-color:#34D39955;color:#A7F3D0">Skor beli {hb:.0f} / 100 · zona ≥ {BUY_TH}</span>
+    <span class="smt-chip" style="border-color:#FB718555;color:#FECDD3">Skor jual {hs:.0f} / 100 · zona ≥ {SELL_TH}</span>
+    <span class="smt-chip">Tren: Stage {int(H['stage'].iloc[-1])}</span>
+  </div>
+</div>""", unsafe_allow_html=True)
 
     # grafik live: harga intrahari vs level bottom kunci
     S.section("⚡ Harga live vs level bottom", "candle 5 menit · ±24 jam terakhir")
@@ -366,8 +499,8 @@ R = compute(daily, price, onchain, manual_rp, manual_z)
 # --- grafik utama ---------------------------------------------------------
 S.section("📈 Grafik harga & level kunci", "skala logaritmik · data mingguan")
 c1, c2 = st.columns([3, 1.4])
-layers = c1.pills("Lapisan", ["MA 30/50/200", "Realized", "Fib 0.786", "Rainbow", "Power law"],
-                  selection_mode="multi", default=["MA 30/50/200", "Realized"], label_visibility="collapsed")
+layers = c1.pills("Lapisan", ["Sinyal beli/jual", "MA 30/50/200", "Realized", "Fib 0.786", "Rainbow", "Power law"],
+                  selection_mode="multi", default=["Sinyal beli/jual", "MA 30/50/200"], label_visibility="collapsed")
 tf = c2.segmented_control("Rentang", ["1Y", "2Y", "4Y", "8Y", "All"], default="4Y", label_visibility="collapsed") or "4Y"
 weeks = {"1Y": 52, "2Y": 104, "4Y": 208, "8Y": 416, "All": 10_000}[tf]
 wk = R["wk"].tail(weeks)
@@ -397,9 +530,68 @@ elif "Realized" in layers and R["rp"]:
 if "Fib 0.786" in layers:
     fig.add_hline(y=R["fib"], line_color="#FBBF24", line_dash="dash", annotation_text=f"Fib 0.786 ${R['fib']:,.0f}")
 fig.add_scatter(x=idx, y=wk.values, name="Harga BTC", line=dict(color="#F7931A", width=2.4))
+HALL = score_history(R)
+EV = signal_events(HALL)
+if "Sinyal beli/jual" in layers:
+    Hs = HALL.loc[idx]
+
+    def spans(mask):
+        out, start = [], None
+        for t, m in zip(mask.index, mask.values):
+            if m and start is None:
+                start = t
+            if not m and start is not None:
+                out.append((start, t))
+                start = None
+        if start is not None:
+            out.append((start, mask.index[-1]))
+        return out
+
+    for x0, x1 in spans(Hs["buy"] >= BUY_TH):
+        fig.add_vrect(x0=x0, x1=x1, fillcolor="#34D399", opacity=0.12, line_width=0, layer="below")
+    for x0, x1 in spans(Hs["sell"] >= SELL_TH):
+        fig.add_vrect(x0=x0, x1=x1, fillcolor="#FB7185", opacity=0.14, line_width=0, layer="below")
+    evv = EV[EV["Tanggal"] >= idx.min()] if not EV.empty else EV
+    sty = {"BELI": ("triangle-up", "#34D399", 0.90, "bottom center"),
+           "KONFIRMASI BELI": ("star", "#22C55E", 0.86, "bottom center"),
+           "JUAL": ("triangle-down", "#FB7185", 1.10, "top center"),
+           "KONFIRMASI JUAL": ("x", "#EF4444", 1.14, "top center"),
+           "JUAL (KELUAR TREN)": ("triangle-down", "#FB923C", 1.10, "top center")}
+    for kind, (sym, col, off, pos) in sty.items():
+        e = evv[evv["Sinyal"] == kind] if not evv.empty else evv
+        if len(e):
+            fig.add_scatter(x=e["Tanggal"], y=e["Harga"] * off, mode="markers+text", name=kind.title(),
+                            marker=dict(symbol=sym, size=15, color=col, line=dict(width=1, color="#0A0D14")),
+                            text=["BELI" if "BELI" in kind else "JUAL"] * len(e), textposition=pos,
+                            textfont=dict(color=col, size=11),
+                            customdata=np.stack([e["Alasan"]], axis=-1),
+                            hovertemplate="%{x|%d %b %Y}<br><b>" + kind + "</b><br>%{customdata[0]}<extra></extra>")
 fig.update_layout(height=470, yaxis_type="log", yaxis_title="USD (log)", hovermode="x unified",
                   margin=dict(t=10, l=0, r=0, b=0), legend=dict(orientation="h", y=1.08))
 st.plotly_chart(fig, width="stretch", key="bt_main")
+st.caption("Zona hijau = valuasi setara bottom siklus (skor beli ≥ 80) · zona merah = valuasi setara puncak (skor jual ≥ 70). "
+           "▲ masuk zona beli · ★ konfirmasi beli (tren berbalik naik) · ▼ merah masuk zona jual · ✕ konfirmasi jual · ▼ oranye jual karena keluar tren setelah reli besar.")
+
+S.section("🧾 Riwayat sinyal beli & jual", "dan apa yang terjadi sesudahnya")
+fs = go.Figure()
+fs.add_scatter(x=HALL.index, y=HALL["buy"], name="Skor beli", line=dict(color="#34D399", width=1.8))
+fs.add_scatter(x=HALL.index, y=HALL["sell"], name="Skor jual", line=dict(color="#FB7185", width=1.8))
+fs.add_hline(y=BUY_TH, line_dash="dot", line_color="#34D399")
+fs.add_hline(y=SELL_TH, line_dash="dot", line_color="#FB7185")
+fs.update_layout(height=240, yaxis_range=[0, 100], margin=dict(t=10, l=0, r=0, b=0), hovermode="x unified",
+                 legend=dict(orientation="h", y=1.15))
+st.plotly_chart(fs, width="stretch", key="bt_scores")
+if EV.empty:
+    st.caption("Belum ada sinyal dalam rentang data.")
+else:
+    tbl = EV.sort_values("Tanggal", ascending=False).copy()
+    tbl["Tanggal"] = tbl["Tanggal"].dt.strftime("%d %b %Y")
+    tbl["Harga"] = tbl["Harga"].map(lambda v: f"${v:,.0f}")
+    for c in ("6 bln kemudian", "12 bln kemudian"):
+        tbl[c] = tbl[c].map(lambda v: "—" if pd.isna(v) else f"{v:+.0%}")
+    st.dataframe(tbl, width="stretch", hide_index=True)
+    st.caption("Untuk sinyal BELI, angka positif = harga naik sesudahnya (sinyal tepat). Untuk sinyal JUAL, angka negatif = harga turun "
+               "sesudahnya (sinyal tepat). Riwayat dihitung dari data sejak 2014; hasil masa lalu bukan jaminan masa depan.")
 
 # --- siklus ----------------------------------------------------------------
 c3, c4 = st.columns(2)
